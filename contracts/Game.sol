@@ -1,17 +1,18 @@
 pragma solidity ^0.8.0;
 
-import "../node_modules/@openzeppelin/contracts/access/AccessControl.sol";
+import "./@openzeppelin/contracts/access/AccessControl.sol";
 
-/*
-interface CCL{
+
+interface ICCL{
     function mint(address to, uint256 amount) external;
-}*/
+}
 
 //THIS CONTRACT MUST BE GIVEN THE MINTER ROLE ON THE CCL CONTRACT!!!!
 contract Game is AccessControl{
 
-    bytes32 public constant ONLY_SERVER = keccak256("ONLY_SERVER");
-
+    bytes32 public constant SERVER_ADMIN = keccak256("SERVER_ADMIN");
+    bytes32 public constant SERVER_MANAGER = keccak256("SERVER_MANAGER");
+    
     struct Player {
         address wallet;
         string MinecraftUsername;
@@ -20,31 +21,54 @@ contract Game is AccessControl{
 
     mapping(address => Player) public players;
 
-    uint256 initialMint = 100;
+    uint256 initialMintCost = 100;
 
-    constructor(){}
+    constructor(){
+        _setRoleAdmin(SERVER_MANAGER, SERVER_ADMIN);
+        _setupRole(SERVER_ADMIN, msg.sender);
+        _setupRole(SERVER_MANAGER, msg.sender);
+    }
+
+    //ONLY THE SERVER CAN CALL THIS FUNCTION
+    function giveServerManager(address account) public onlyRole(SERVER_ADMIN){
+        grantRole(SERVER_MANAGER, account);
+    }
 
     function compareStrs(string memory a, string memory b) public pure returns(bool){
         return ( keccak256(abi.encodePacked(a)) == keccak256(abi.encodePacked(b)));
     }
 
-    //Associates wallet address with player struct
-    function associatePlayer(address wallet, string memory mcUsername) public{
-        require(msg.sender == wallet);
-        players[wallet].wallet = wallet;
-        players[wallet].MinecraftUsername = mcUsername;
-        players[wallet].confirmed = false;
+    function isNull(string memory str) public pure returns(bool){
+        return !(bytes(str).length > 0);
     }
 
-    //Player confirms in game that the address associated with their user is theirs, server then calls this function
-    function confirmPlayer(address wallet, string memory mcUserToConfirm) private onlyRole(ONLY_SERVER){
-        require(compareStrs(players[wallet].MinecraftUsername, mcUserToConfirm));
-        players[wallet].confirmed = true;
+    //Associates wallet address with player struct
+    function associatePlayer(string memory mcUsername) public{
+        address wallet = msg.sender;
+        require(players[wallet].confirmed == false, "Wallet already associated with MC Username.");
+        players[wallet].wallet = wallet;
+        players[wallet].MinecraftUsername = mcUsername;
+    }
+
+    function getAssociatedUsername(address wallet) public view returns(string memory){
+        return players[wallet].MinecraftUsername;
     }
 
     //To call this function, this contract must be given the MINTER role in the CCL Contract
-    function mintCCLtoPlayer(address CCLContractAddr, address playerWallet) private{
-        /*CCL CCLContract = CCL(CCLContractAddr);
-        CCLContract.mint(playerWallet, initialMint);*/
+    function mintCCLtoPlayer(address CCLContractAddr, address playerWallet) public onlyRole(SERVER_MANAGER){
+        ICCL CCLContract = ICCL(CCLContractAddr);
+        CCLContract.mint(playerWallet, initialMintCost);
+    }
+
+    //Player confirms in game that the address associated with their user is theirs, server then calls this function
+    //ONLY THE SERVER CAN CALL THIS FUNCTION
+    function confirmPlayer(address playerWallet, string memory mcUserToConfirm, address CCLContractAddr) public onlyRole(SERVER_MANAGER){
+        require(compareStrs(players[playerWallet].MinecraftUsername, mcUserToConfirm), "The MC Username you are trying to confirm is not the one sent.");
+        players[playerWallet].confirmed = true;
+        mintCCLtoPlayer(CCLContractAddr, playerWallet);
+    }
+
+    function isConfirmed(address wallet) public view returns(bool){
+        return players[wallet].confirmed;
     }
 }
